@@ -54,17 +54,17 @@ exports.sendData = functions.https.onCall((data, context) => {
 	return docRef.get()
 		.then(documentSnapshot => {
 			if (!documentSnapshot.exists) {
-				console.log("Document not found");
+				throw new functions.https.HttpsError('device-error', 'Invalid device instance ID');
 			}
 			const token = documentSnapshot.get('fcmToken');
 
 			// Attempt to send entire message if it doesn't exceed FCM limit
 			if ((Buffer.byteLength(message) + Buffer.byteLength('message')) < 4096) {
-				return sendMessage(token, message, docRef);
+				return sendMessage(token, message, docRef, documentSnapshot);
 			}
 			// Otherwise send preview and save message to db
 			else {
-				return saveMessage(token, message, docRef);
+				return saveMessage(token, message, docRef, documentSnapshot);
 			}
 		})
 		.catch(error => {
@@ -79,7 +79,10 @@ exports.sendData = functions.https.onCall((data, context) => {
 // @param docRef Reference to user Firestore document
 //////////////////////////////////////////////////////////////
 
-function saveMessage(token, message, docRef) {
+function saveMessage(token, message, docRef, documentSnapshot) {
+	if ((documentSnapshot.updateTime.seconds + 3) < Firestore.Timestamp.now().seconds) {
+		throw new functions.https.HttpsError('send-error', 'Attempting to send too often. Try again later.');
+	}
 	const payload = {
 		data: {
 			messagePreview: message.slice(0, 37) + "...",
@@ -91,7 +94,7 @@ function saveMessage(token, message, docRef) {
 		.then(querySnapshot => {
 			// Arbitrary message limit of 20, maximum size of 20 x 1024 bytes
 			if (querySnapshot.size > 20) {
-				throw new functions.https.HttpsError('device-error', 'Too many messages in the queue. Make sure the device is on and connected.');
+				throw new functions.https.HttpsError('send-error', 'Too many pending messages for this device');
 			}
 
 			docRef.collection('messages').add({ message: message });
@@ -107,7 +110,7 @@ function saveMessage(token, message, docRef) {
 // @param docRef Reference to user Firestore document
 //////////////////////////////////////////////////////////////
 
-function sendMessage(token, message, docRef) {
+function sendMessage(token, message, docRef, documentSnapshot) {
 	const payload = {
 		data: {
 			message: message,
@@ -117,12 +120,56 @@ function sendMessage(token, message, docRef) {
 		.then((result) => {
 			if (result.results[0].error) {
 				if (res.result[0].error.code === 'messaging/payload-size-limit-exceeded') {
-					return saveMessage(token, message, docRef);
+					return saveMessage(token, message, docRef, documentSnapshot);
 				}
 			}
 			return result;
 		})
 }
+
+//////////////////////////////////////////////////////////////
+// Add a new device to the database
+//
+// @param data: {deviceToken: FCM token,
+//				deviceName: Name of device}
+// @param context Provided by browser by Firebase
+//////////////////////////////////////////////////////////////
+
+exports.addDevice = functions.https.onCall((data, context) => {
+	const deviceToken = data.deviceToken;
+	const deviceName = data.deviceName;
+	const uid = context.auth.uid;
+
+	if (!(typeof deviceToken === 'string') || deviceToken.length === 0) {
+		// Throwing an HttpsError so that the client gets the error details.
+		throw new functions.https.HttpsError('invalid-argument', 'The function must be called with ' +
+			'argument "deviceToken" containing the new device token');
+	}
+
+	if (!(typeof deviceName === 'string') || deviceName.length === 0) {
+		// Throwing an HttpsError so that the client gets the error details.
+		throw new functions.https.HttpsError('invalid-argument', 'The function must be called with ' +
+			'argument "deviceName" containing the new device name');
+	}
+
+	// Checking that the user is authenticated.
+	if (!context.auth) {
+		// Throwing an HttpsError so that the client gets the error details.
+		throw new functions.https.HttpsError('failed-precondition', 'The function must be called ' +
+			'while authenticated.');
+	}
+
+	return admin.firestore().collection('users').doc(uid).collection('devices').add({
+		fcmToken: deviceToken,
+		deviceName: deviceName
+	})
+	.then(function (docRef) {
+		return docRef.id;
+	})
+	.catch(function (error) {
+		return error;
+	});
+});
 
 //////////////////////////////////////////////////////////////
 // Delete metadata and pending messages for given device
@@ -133,7 +180,6 @@ function sendMessage(token, message, docRef) {
 //////////////////////////////////////////////////////////////
 
 exports.deleteDevice = functions.https.onCall((data, context) => {
-
 	const deviceInstanceID = data.selectedDevice;
 	const uid = context.auth.uid;
 
@@ -152,17 +198,12 @@ exports.deleteDevice = functions.https.onCall((data, context) => {
 
 	var docRef = admin.firestore().collection('users').doc(uid).collection('devices').doc(deviceInstanceID);
 
-	docRef.collection('messages').get()
+	return docRef.collection('messages').get()
 		.then(querySnapshot => {
-			if (querySnapshot.size === 0) {
-				return;
-			}
-
 			let batch = db.batch();
 			querySnapshot.docs.forEach((doc) => {
 				batch.delete(doc.ref);
 			});
-
 			return batch.commit();
 		}).then(() => {
 			return docRef.delete();
