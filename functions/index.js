@@ -97,10 +97,13 @@ function saveMessage(token, message, docRef, documentSnapshot) {
 				throw new functions.https.HttpsError('send-error', 'Too many pending messages for this device');
 			}
 			return docRef.collection('messages').add({ message: message });
-		  })
-		  .then(() => {
-			return admin.messaging().sendToDevice(token, payload);	
-		  });
+		})
+		.then(() => {
+			return admin.messaging().sendToDevice(token, payload);
+		})
+		.catch(error => {
+			throw new functions.https.HttpsError('unknown-error', error);
+		});
 }
 
 //////////////////////////////////////////////////////////////
@@ -164,12 +167,12 @@ exports.addDevice = functions.https.onCall((data, context) => {
 		fcmToken: deviceToken,
 		deviceName: deviceName
 	})
-	.then(function (docRef) {
-		return docRef.id;
-	})
-	.catch(function (error) {
-		return error;
-	});
+		.then(function (docRef) {
+			return docRef.id;
+		})
+		.catch(function (error) {
+			return error;
+		});
 });
 
 //////////////////////////////////////////////////////////////

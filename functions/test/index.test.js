@@ -13,7 +13,7 @@ var deviceID;
 var uid;
 var docRef;
 
-function setup(auth){
+function setup(auth) {
   return firebase.initializeTestApp({
     projectId,
     auth
@@ -31,8 +31,8 @@ describe('addDevice', () => {
     uid = 'testUID';
     let deviceToken = 'testToken';
     let deviceName = 'testDeviceName';
-    const db = setup({uid: uid});
-    const data = { deviceToken: deviceToken, deviceName: deviceName};
+    const db = setup({ uid: uid });
+    const data = { deviceToken: deviceToken, deviceName: deviceName };
     const callableContext = { auth: { uid: uid } }
 
     const result = await test.wrap(myFunctions.addDevice)(data, callableContext);
@@ -87,10 +87,10 @@ describe('deleteDevice', () => {
     const data = { selectedDevice: deviceID };
     const callableContext = { auth: { uid: uid } };
 
-    test.wrap(myFunctions.deleteDevice)(data, callableContext)
-    .then(() => {
-      firebase.assertFails(docRef.get());
-    });
+    return test.wrap(myFunctions.deleteDevice)(data, callableContext)
+      .then(() => {
+        return firebase.assertFails(docRef.get());
+      });
   });
 
 });
