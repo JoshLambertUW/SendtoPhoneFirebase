@@ -80,7 +80,7 @@ exports.sendData = functions.https.onCall((data, context) => {
 //////////////////////////////////////////////////////////////
 
 function saveMessage(token, message, docRef, documentSnapshot) {
-	if ((documentSnapshot.updateTime.seconds + 3) < Firestore.Timestamp.now().seconds) {
+	if ((documentSnapshot.updateTime.seconds + 3) > admin.firestore.Timestamp.now().seconds) {
 		throw new functions.https.HttpsError('send-error', 'Attempting to send too often. Try again later.');
 	}
 	const payload = {
@@ -96,10 +96,11 @@ function saveMessage(token, message, docRef, documentSnapshot) {
 			if (querySnapshot.size > 20) {
 				throw new functions.https.HttpsError('send-error', 'Too many pending messages for this device');
 			}
-
-			docRef.collection('messages').add({ message: message });
-			return admin.messaging().sendToDevice(token, payload);
-		})
+			return docRef.collection('messages').add({ message: message });
+		  })
+		  .then(() => {
+			return admin.messaging().sendToDevice(token, payload);	
+		  });
 }
 
 //////////////////////////////////////////////////////////////
@@ -119,7 +120,7 @@ function sendMessage(token, message, docRef, documentSnapshot) {
 	return admin.messaging().sendToDevice(token, payload)
 		.then((result) => {
 			if (result.results[0].error) {
-				if (res.result[0].error.code === 'messaging/payload-size-limit-exceeded') {
+				if (result.result[0].error.code === 'messaging/payload-size-limit-exceeded') {
 					return saveMessage(token, message, docRef, documentSnapshot);
 				}
 			}
